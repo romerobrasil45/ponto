@@ -1,0 +1,881 @@
+<!DOCTYPE html>
+<!--
+  ============================================================================
+  CARTÃO DE PONTO — CALCULADORA DE HORAS EXTRAS
+  ============================================================================
+  Como a página funciona, de forma resumida:
+
+  1) Existe um horário de trabalho configurado para cada dia da semana
+     (por padrão: 06h30–16h30 de segunda a quinta, 06h30–15h30 na sexta,
+     e sábado/domingo sem expediente). Esse horário fica visível na faixa
+     logo abaixo do título e pode ser ajustado clicando em "Ajustar horários".
+
+  2) Para cada dia trabalhado, você preenche apenas dois campos:
+       - Data
+       - Saída real (o horário em que você realmente saiu naquele dia)
+     A página descobre sozinha qual é o dia da semana e o horário de
+     saída previsto para aquela data, e calcula quanto tempo passou
+     do previsto (a "hora extra" daquele dia).
+
+  3) Todos os dias registrados aparecem numa lista, com o total de horas
+     extras somado automaticamente no rodapé (em hh:mm e também em número
+     decimal, útil para multiplicar pelo valor da hora).
+
+  4) Os dados ficam salvos no navegador (não precisa internet depois de
+     carregado, e não é preciso salvar manualmente).
+
+  5) O botão "Exportar para Excel" gera um arquivo .xlsx com a mesma
+     estrutura da planilha original (abas "Configuração" e "Registro de
+     Ponto", com fórmulas), já preenchido com os dias registrados aqui.
+  ============================================================================
+-->
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cartão de Ponto — Horas Extras</title>
+<!-- Biblioteca usada apenas para gerar o arquivo Excel (.xlsx) ao clicar em "Exportar para Excel" -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Roboto+Slab:wght@500;700&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap');
+
+  :root{
+    --paper:      #E9DEC2;
+    --paper-dark: #DCCFAB;
+    --ink:        #2B2620;
+    --ink-soft:   #5C5445;
+    --steel:      #46586A;
+    --steel-dark: #33424F;
+    --stamp:      #AD3A2C;
+    --stamp-dark: #8C2E23;
+    --line:       #C9B990;
+    --ok:         #4B6B4F;
+  }
+
+  *{ box-sizing:border-box; }
+  html,body{ margin:0; padding:0; }
+  body{
+    background: var(--paper);
+    background-image:
+      repeating-linear-gradient(0deg, rgba(43,38,32,0.025) 0px, rgba(43,38,32,0.025) 1px, transparent 1px, transparent 3px);
+    color: var(--ink);
+    font-family: 'IBM Plex Mono', monospace;
+    min-height: 100vh;
+    padding: clamp(16px, 4vw, 48px);
+  }
+
+  .card{
+    max-width: 760px;
+    margin: 0 auto;
+    background: var(--paper-dark);
+    border: 1px solid var(--line);
+    box-shadow: 0 1px 0 rgba(43,38,32,0.15), 0 12px 30px rgba(43,38,32,0.12);
+    position: relative;
+  }
+
+  /* punch notch top */
+  .card::before{
+    content:"";
+    position:absolute;
+    top:-11px; left:50%;
+    transform: translateX(-50%);
+    width:22px; height:22px;
+    border-radius:50%;
+    background: var(--paper);
+    border: 1px solid var(--line);
+  }
+
+  header{
+    padding: 30px clamp(20px,5vw,44px) 22px;
+    border-bottom: 2px solid var(--ink);
+  }
+
+  .eyebrow{
+    font-family:'IBM Plex Mono', monospace;
+    font-size:12px;
+    letter-spacing:0.14em;
+    color: var(--ink-soft);
+  }
+
+  h1{
+    font-family:'Roboto Slab', serif;
+    font-weight:700;
+    font-size: clamp(26px, 4vw, 34px);
+    margin: 4px 0 6px;
+    color: var(--ink);
+    letter-spacing: 0.01em;
+  }
+
+  .subtitle{
+    font-size: 13px;
+    color: var(--ink-soft);
+    max-width: 46ch;
+    line-height:1.5;
+  }
+
+  section{
+    padding: 22px clamp(20px,5vw,44px);
+  }
+
+  .schedule-strip{
+    display:flex;
+    flex-wrap:wrap;
+    gap: 10px 18px;
+    padding: 14px clamp(20px,5vw,44px);
+    background: var(--steel);
+    color: #EFE7D2;
+  }
+  .schedule-strip .day{
+    font-size:12px;
+    display:flex;
+    flex-direction:column;
+    gap:2px;
+    min-width: 74px;
+  }
+  .schedule-strip .day .lbl{
+    letter-spacing:0.08em;
+    color:#C9D4DB;
+    font-size:10.5px;
+  }
+  .schedule-strip .day .val{
+    font-weight:600;
+    font-size:13px;
+  }
+  .schedule-strip button{
+    margin-left:auto;
+    align-self:center;
+    background:none;
+    border:1px solid rgba(239,231,210,0.4);
+    color:#EFE7D2;
+    font-family:'IBM Plex Mono',monospace;
+    font-size:11px;
+    padding:6px 10px;
+    cursor:pointer;
+    letter-spacing:0.04em;
+  }
+  .schedule-strip button:hover{ background: rgba(239,231,210,0.12); }
+
+  .settings{
+    display:none;
+    padding: 18px clamp(20px,5vw,44px);
+    background: #DED2AF;
+    border-bottom: 1px dashed var(--line);
+  }
+  .settings.open{ display:block; }
+  .settings-grid{
+    display:grid;
+    grid-template-columns: repeat(auto-fill, minmax(150px,1fr));
+    gap: 12px 16px;
+  }
+  .settings-grid label{
+    font-size:11px;
+    color: var(--ink-soft);
+    display:block;
+    margin-bottom:4px;
+    letter-spacing:0.03em;
+  }
+  .settings-grid .pair{ display:flex; gap:6px; }
+  .settings input[type=time]{
+    font-family:'IBM Plex Mono',monospace;
+    font-size:13px;
+    padding:6px 6px;
+    border:1px solid var(--line);
+    background:#F4ECD8;
+    color:var(--ink);
+    width:100%;
+  }
+  .settings-note{
+    margin-top:12px;
+    font-size:11px;
+    color: var(--ink-soft);
+  }
+
+  form.add-entry{
+    display:flex;
+    flex-wrap:wrap;
+    gap: 14px;
+    align-items:end;
+  }
+  .field{ display:flex; flex-direction:column; gap:6px; }
+  .field label{
+    font-size:11px;
+    letter-spacing:0.08em;
+    color: var(--ink-soft);
+  }
+  .field input{
+    font-family:'IBM Plex Mono',monospace;
+    font-size:15px;
+    padding:9px 10px;
+    border: 1px solid var(--ink);
+    background: #F4ECD8;
+    color: var(--ink);
+    min-width: 150px;
+  }
+  .field input:focus{
+    outline: 2px solid var(--steel);
+    outline-offset:1px;
+  }
+  .add-btn{
+    font-family:'Roboto Slab', serif;
+    font-weight:700;
+    font-size:14px;
+    background: var(--ink);
+    color: var(--paper);
+    border:none;
+    padding: 11px 22px;
+    cursor:pointer;
+    letter-spacing:0.02em;
+  }
+  .add-btn:hover{ background: #443C30; }
+  .add-btn:disabled{ opacity:0.4; cursor:not-allowed; }
+
+  .error-msg{
+    font-size:12px;
+    color: var(--stamp-dark);
+    margin-top:4px;
+    min-height: 14px;
+  }
+
+  .entries{
+    padding: 6px clamp(20px,5vw,44px) 10px;
+  }
+  .entries-head{
+    display:flex;
+    justify-content:space-between;
+    align-items:baseline;
+    margin-bottom: 10px;
+  }
+  .entries-head h2{
+    font-family:'Roboto Slab',serif;
+    font-size: 15px;
+    margin:0;
+    letter-spacing:0.02em;
+  }
+  .entries-head .count{
+    font-size:11px;
+    color: var(--ink-soft);
+  }
+
+  .empty-state{
+    padding: 30px 10px;
+    text-align:center;
+    color: var(--ink-soft);
+    font-size: 13px;
+    border: 1px dashed var(--line);
+  }
+
+  .row{
+    display:grid;
+    grid-template-columns: 20px 1fr auto auto auto 24px;
+    align-items:center;
+    gap: 10px;
+    padding: 10px 4px;
+    border-bottom: 1px solid var(--line);
+    font-size: 13px;
+  }
+  .row.header-row{
+    font-size:10.5px;
+    letter-spacing:0.06em;
+    color: var(--ink-soft);
+    border-bottom: 1px solid var(--ink);
+    padding-bottom:6px;
+  }
+  .hole{
+    width:10px; height:10px;
+    border-radius:50%;
+    background: var(--paper);
+    border:1px solid var(--line);
+    justify-self:center;
+  }
+  .row .date-col{ display:flex; flex-direction:column; }
+  .row .date-col .d{ font-weight:600; }
+  .row .date-col .w{ font-size:10.5px; color:var(--ink-soft); }
+  .row .sched-col, .row .real-col{ text-align:right; color: var(--ink-soft); white-space:nowrap; }
+  .row .extra-col{
+    text-align:right;
+    font-weight:700;
+    white-space:nowrap;
+  }
+  .row .extra-col.pos{ color: var(--stamp-dark); }
+  .row .extra-col.zero{ color: var(--ok); }
+  .del-btn{
+    background:none;
+    border:none;
+    color: var(--ink-soft);
+    font-size:16px;
+    cursor:pointer;
+    line-height:1;
+    justify-self:center;
+  }
+  .del-btn:hover{ color: var(--stamp); }
+
+  footer{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    flex-wrap:wrap;
+    gap: 16px;
+    padding: 22px clamp(20px,5vw,44px) 28px;
+    border-top: 2px solid var(--ink);
+  }
+
+  .stamp-block{
+    display:flex;
+    align-items:center;
+    gap: 16px;
+  }
+  .stamp{
+    border: 3px solid var(--stamp);
+    color: var(--stamp);
+    padding: 8px 16px;
+    transform: rotate(-3deg);
+    font-family:'Roboto Slab',serif;
+    font-weight:700;
+    font-size: clamp(20px,4vw,28px);
+    letter-spacing:0.02em;
+    white-space:nowrap;
+  }
+  .stamp-label{
+    display:flex;
+    flex-direction:column;
+    gap:2px;
+  }
+  .stamp-label .t1{
+    font-size:11px;
+    letter-spacing:0.1em;
+    color: var(--ink-soft);
+  }
+  .stamp-label .t2{
+    font-size:13px;
+    color: var(--ink-soft);
+  }
+
+  .footer-actions{
+    display:flex;
+    gap:10px;
+    flex-wrap:wrap;
+  }
+
+  .clear-btn{
+    background:none;
+    border:1px solid var(--ink-soft);
+    color: var(--ink-soft);
+    font-family:'IBM Plex Mono',monospace;
+    font-size:11.5px;
+    padding: 8px 14px;
+    cursor:pointer;
+  }
+  .clear-btn:hover{ border-color: var(--stamp); color: var(--stamp-dark); }
+
+  .export-btn{
+    background: var(--steel);
+    border: 1px solid var(--steel-dark);
+    color: #EFE7D2;
+    font-family:'IBM Plex Mono',monospace;
+    font-size:11.5px;
+    padding: 8px 14px;
+    cursor:pointer;
+  }
+  .export-btn:hover{ background: var(--steel-dark); }
+  .export-btn:disabled{ opacity:0.5; cursor:not-allowed; }
+
+  @media (max-width: 480px){
+    .row{ grid-template-columns: 14px 1fr auto 20px; }
+    .row .sched-col, .row .real-col{ display:none; }
+    .row.header-row .sched-col, .row.header-row .real-col{ display:none; }
+  }
+</style>
+</head>
+<body>
+
+<div class="card">
+
+  <!-- Cabeçalho: apenas título e um resumo de uma linha sobre o que a página faz -->
+  <header>
+    <div class="eyebrow">REGISTRO PESSOAL</div>
+    <h1>Cartão de Ponto</h1>
+    <div class="subtitle">Registre o horário de saída de cada dia. O sistema calcula sozinho quanto passou do seu horário e soma tudo no total.</div>
+  </header>
+
+  <!-- Faixa com o horário de trabalho de cada dia da semana.
+       Este bloco é montado pelo JavaScript (função renderSchedule),
+       lendo os valores guardados na variável "schedule". -->
+  <div class="schedule-strip" id="scheduleStrip"></div>
+
+  <!-- Painel de configuração de horários, escondido por padrão.
+       Abre ao clicar em "Ajustar horários" (botão dentro da faixa acima).
+       Cada dia da semana tem dois campos de horário: Entrada e Saída Prevista.
+       Deixar os dois em branco marca o dia como "sem expediente fixo"
+       (ex.: sábado e domingo, por padrão). -->
+  <div class="settings" id="settingsPanel">
+    <div class="settings-grid" id="settingsGrid"></div>
+    <div class="settings-note">Deixe entrada e saída em branco num dia para marcá-lo como sem expediente fixo.</div>
+  </div>
+
+  <!-- Formulário para adicionar um dia trabalhado.
+       Campos que o usuário preenche:
+         - Data: o dia que está sendo registrado.
+         - Saída real: o horário em que realmente saiu nesse dia.
+       O horário previsto de saída (para saber se houve hora extra) NÃO é
+       digitado aqui — ele é descoberto automaticamente a partir do dia da
+       semana da data escolhida, usando a configuração de horários acima. -->
+  <section>
+    <form class="add-entry" id="addForm">
+      <div class="field">
+        <label for="inpDate">Data</label>
+        <input type="date" id="inpDate" required>
+      </div>
+      <div class="field">
+        <label for="inpExit">Saída real</label>
+        <input type="time" id="inpExit" required>
+      </div>
+      <button type="submit" class="add-btn">Adicionar</button>
+    </form>
+    <!-- Mensagens de erro simples, como "data já registrada" ou campo vazio -->
+    <div class="error-msg" id="errorMsg"></div>
+  </section>
+
+  <!-- Lista dos dias já registrados, um por linha, com:
+       dia/mês/ano e dia da semana | horário previsto | saída real | horas extras do dia.
+       Montada pela função renderEntries(). Cada linha tem um "×" para excluir o registro. -->
+  <div class="entries">
+    <div class="entries-head">
+      <h2>Dias registrados</h2>
+      <span class="count" id="entryCount"></span>
+    </div>
+    <div id="rowsWrap"></div>
+  </div>
+
+  <!-- Rodapé: total de horas extras somando todos os dias registrados
+       (mostrado em hh:mm no "carimbo" e também em número decimal, ex: 3,50 h,
+       útil para quem quer multiplicar pelo valor da hora trabalhada).
+       Também ficam aqui os botões de exportar para Excel e de limpar tudo. -->
+  <footer>
+    <div class="stamp-block">
+      <div class="stamp" id="totalStamp">0:00</div>
+      <div class="stamp-label">
+        <span class="t1">HORAS EXTRAS — TOTAL</span>
+        <span class="t2" id="totalDecimal">0,00 h</span>
+      </div>
+    </div>
+    <div class="footer-actions">
+      <!-- Gera e baixa um arquivo .xlsx com os mesmos dados, no formato da planilha original -->
+      <button class="export-btn" id="exportBtn">Exportar para Excel</button>
+      <!-- Apaga todos os dias registrados (pede confirmação antes) -->
+      <button class="clear-btn" id="clearBtn">Limpar todos os registros</button>
+    </div>
+  </footer>
+</div>
+
+<script>
+/* ============================================================================
+   DADOS BASE
+   ============================================================================ */
+
+// Nomes dos dias da semana, na ordem que o JavaScript usa internamente
+// (0 = domingo, 1 = segunda, ... 6 = sábado — é o padrão do objeto Date).
+const DAY_NAMES = ["Domingo","Segunda-feira","Terça-feira","Quarta-feira","Quinta-feira","Sexta-feira","Sábado"];
+const DAY_SHORT = ["Dom","Seg","Ter","Qua","Qui","Sex","Sáb"];
+
+// Horário de trabalho padrão de cada dia da semana (usado na primeira vez
+// que a página abre, antes de qualquer ajuste manual). Cada dia tem:
+//   in  -> horário de entrada
+//   out -> horário de saída previsto (é contra ele que a hora extra é calculada)
+// Dias com in/out vazios são tratados como "sem expediente fixo".
+const DEFAULT_SCHEDULE = {
+  1: { in:"06:30", out:"16:30" }, // segunda
+  2: { in:"06:30", out:"16:30" }, // terça
+  3: { in:"06:30", out:"16:30" }, // quarta
+  4: { in:"06:30", out:"16:30" }, // quinta
+  5: { in:"06:30", out:"15:30" }, // sexta
+  6: { in:"", out:"" },           // sábado
+  0: { in:"", out:"" },           // domingo
+};
+
+// "schedule"  -> horário de trabalho atual (começa igual ao DEFAULT_SCHEDULE,
+//                mas pode ser alterado no painel "Ajustar horários").
+// "entries"   -> lista dos dias registrados pelo usuário. Cada item tem:
+//                { id, date: 'AAAA-MM-DD', exit: 'HH:MM' }
+// Ambos são guardados no navegador (ver saveEntries/saveSchedule/loadData)
+// para não se perderem ao fechar a página.
+let schedule = JSON.parse(JSON.stringify(DEFAULT_SCHEDULE));
+let entries = []; // { id, date: 'YYYY-MM-DD', exit: 'HH:MM' }
+
+/* ============================================================================
+   FUNÇÕES DE APOIO (conversão de horários e datas)
+   ============================================================================ */
+
+// Converte "HH:MM" em número de minutos (ex: "01:30" -> 90). Usado para
+// poder comparar/subtrair horários facilmente.
+function toMinutes(hhmm){
+  if(!hhmm) return null;
+  const [h,m] = hhmm.split(':').map(Number);
+  return h*60+m;
+}
+// Converte um total de minutos de volta para o formato "H:MM" exibido na tela.
+function minutesToHHMM(mins){
+  const sign = mins < 0 ? "-" : "";
+  mins = Math.abs(Math.round(mins));
+  const h = Math.floor(mins/60);
+  const m = mins % 60;
+  return `${sign}${h}:${String(m).padStart(2,'0')}`;
+}
+// Formata uma data "AAAA-MM-DD" (formato do campo <input type="date">)
+// para o formato brasileiro "DD/MM/AAAA" exibido na lista.
+function formatDatePt(dateStr){
+  const [y,m,d] = dateStr.split('-');
+  return `${d}/${m}/${y}`;
+}
+// Descobre o dia da semana (0=domingo ... 6=sábado) a partir de uma data
+// no formato "AAAA-MM-DD".
+function weekdayOf(dateStr){
+  const [y,m,d] = dateStr.split('-').map(Number);
+  return new Date(y, m-1, d).getDay();
+}
+
+/* ============================================================================
+   RENDERIZAÇÃO DA TELA (monta o HTML dinamicamente a partir dos dados)
+   ============================================================================ */
+
+// Desenha a faixa de horários (logo abaixo do título), mostrando entrada e
+// saída prevista de cada dia da semana, e o botão "Ajustar horários" que
+// abre/fecha o painel de configuração.
+function renderSchedule(){
+  const strip = document.getElementById('scheduleStrip');
+  strip.innerHTML = '';
+  [1,2,3,4,5,6,0].forEach(wd=>{
+    const s = schedule[wd];
+    const div = document.createElement('div');
+    div.className = 'day';
+    const val = (s.in && s.out) ? `${s.in} – ${s.out}` : '— folga —';
+    div.innerHTML = `<span class="lbl">${DAY_SHORT[wd].toUpperCase()}</span><span class="val">${val}</span>`;
+    strip.appendChild(div);
+  });
+  const btn = document.createElement('button');
+  btn.textContent = 'Ajustar horários';
+  btn.type = 'button';
+  btn.onclick = ()=>{
+    document.getElementById('settingsPanel').classList.toggle('open');
+  };
+  strip.appendChild(btn);
+}
+
+// Desenha o painel de configuração (escondido por padrão): um par de campos
+// de horário (Entrada / Saída Prevista) para cada dia da semana. Qualquer
+// alteração aqui atualiza "schedule", salva no navegador e recalcula a lista
+// de dias e o total, já que o horário previsto de cada dia depende disso.
+function renderSettings(){
+  const grid = document.getElementById('settingsGrid');
+  grid.innerHTML = '';
+  [1,2,3,4,5,6,0].forEach(wd=>{
+    const s = schedule[wd];
+    const wrap = document.createElement('div');
+    wrap.innerHTML = `
+      <label>${DAY_NAMES[wd]}</label>
+      <div class="pair">
+        <input type="time" data-wd="${wd}" data-kind="in" value="${s.in||''}">
+        <input type="time" data-wd="${wd}" data-kind="out" value="${s.out||''}">
+      </div>
+    `;
+    grid.appendChild(wrap);
+  });
+  grid.querySelectorAll('input').forEach(inp=>{
+    inp.addEventListener('change', async (e)=>{
+      const wd = e.target.dataset.wd;
+      const kind = e.target.dataset.kind;
+      schedule[wd][kind] = e.target.value;
+      await saveSchedule();
+      renderSchedule();
+      renderEntries();
+    });
+  });
+}
+
+// O CÁLCULO PRINCIPAL DA PÁGINA: dado um dia (dateStr) e o horário em que
+// a pessoa realmente saiu (exitStr), descobre:
+//   - qual é o dia da semana (wd)
+//   - qual era o horário de saída previsto para esse dia (scheduledOut)
+//   - quantos minutos passaram do previsto (extraMin) — nunca menor que zero
+//     (ou seja, sair mais cedo não gera "hora extra negativa")
+function computeExtra(dateStr, exitStr){
+  const wd = weekdayOf(dateStr);
+  const s = schedule[wd] || {in:"",out:""};
+  const scheduledOut = s.out || null;
+  const exitMin = toMinutes(exitStr);
+  const schedMin = toMinutes(scheduledOut);
+  let extraMin = 0;
+  if(schedMin !== null && exitMin !== null){
+    extraMin = Math.max(0, exitMin - schedMin);
+  }
+  return { wd, scheduledOut, extraMin };
+}
+
+// Desenha a lista de dias registrados (uma linha por dia, ordenada por data),
+// usando computeExtra() para mostrar o horário previsto, a saída real e a
+// hora extra de cada um. Também cria o botão "×" de excluir em cada linha.
+// Quando não há nenhum dia registrado, mostra uma mensagem no lugar da lista.
+function renderEntries(){
+  const wrap = document.getElementById('rowsWrap');
+  const countEl = document.getElementById('entryCount');
+  wrap.innerHTML = '';
+
+  if(entries.length === 0){
+    wrap.innerHTML = '<div class="empty-state">Nenhum dia registrado ainda. Adicione a data e a saída real acima.</div>';
+    countEl.textContent = '';
+  } else {
+    countEl.textContent = `${entries.length} dia${entries.length>1?'s':''}`;
+    const sorted = [...entries].sort((a,b)=> a.date.localeCompare(b.date));
+
+    const header = document.createElement('div');
+    header.className = 'row header-row';
+    header.innerHTML = `<span></span><span>DATA</span><span class="sched-col">PREVISTO</span><span class="real-col">SAÍDA</span><span>EXTRA</span><span></span>`;
+    wrap.appendChild(header);
+
+    sorted.forEach(entry=>{
+      const { wd, scheduledOut, extraMin } = computeExtra(entry.date, entry.exit);
+      const row = document.createElement('div');
+      row.className = 'row';
+      const extraClass = extraMin > 0 ? 'pos' : 'zero';
+      row.innerHTML = `
+        <span class="hole"></span>
+        <span class="date-col"><span class="d">${formatDatePt(entry.date)}</span><span class="w">${DAY_SHORT[wd]}</span></span>
+        <span class="sched-col">${scheduledOut || '—'}</span>
+        <span class="real-col">${entry.exit}</span>
+        <span class="extra-col ${extraClass}">${minutesToHHMM(extraMin)}</span>
+        <button class="del-btn" data-id="${entry.id}" title="Remover">×</button>
+      `;
+      wrap.appendChild(row);
+    });
+
+    // Cada linha tem seu próprio botão de excluir; ao clicar, remove só
+    // aquele registro da lista "entries" e redesenha a tela.
+    wrap.querySelectorAll('.del-btn').forEach(btn=>{
+      btn.addEventListener('click', async ()=>{
+        entries = entries.filter(e=> e.id !== btn.dataset.id);
+        await saveEntries();
+        renderEntries();
+        renderTotal();
+      });
+    });
+  }
+
+  renderTotal();
+}
+
+// Soma as horas extras de todos os dias registrados e atualiza o "carimbo"
+// do rodapé: o total em hh:mm (ex: "3:45") e o total em número decimal
+// (ex: "3,75 h"), este último pensado para quem quer multiplicar pelo
+// valor da hora trabalhada.
+function renderTotal(){
+  let totalMin = 0;
+  entries.forEach(entry=>{
+    const { extraMin } = computeExtra(entry.date, entry.exit);
+    totalMin += extraMin;
+  });
+  document.getElementById('totalStamp').textContent = minutesToHHMM(totalMin);
+  document.getElementById('totalDecimal').textContent = (totalMin/60).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2}) + ' h';
+}
+
+/* ============================================================================
+   SALVAR E CARREGAR DADOS (para os registros não se perderem ao fechar a página)
+   ============================================================================ */
+
+// Salva a lista de dias registrados no armazenamento do navegador.
+async function saveEntries(){
+  try{
+    await window.storage.set('overtime-entries', JSON.stringify(entries), false);
+  }catch(err){ console.error('Erro ao salvar registros:', err); }
+}
+// Salva o horário de trabalho configurado (caso tenha sido ajustado) no
+// armazenamento do navegador.
+async function saveSchedule(){
+  try{
+    await window.storage.set('overtime-schedule', JSON.stringify(schedule), false);
+  }catch(err){ console.error('Erro ao salvar horário:', err); }
+}
+// Executada quando a página abre: tenta recuperar o horário e os registros
+// salvos anteriormente; se não houver nada salvo, usa os valores padrão.
+// No final, desenha a faixa de horários, o painel de configuração e a lista.
+async function loadData(){
+  try{
+    const s = await window.storage.get('overtime-schedule', false);
+    if(s && s.value) schedule = JSON.parse(s.value);
+  }catch(err){ /* nada salvo ainda, usa padrão */ }
+  try{
+    const e = await window.storage.get('overtime-entries', false);
+    if(e && e.value) entries = JSON.parse(e.value);
+  }catch(err){ /* nada salvo ainda */ }
+  renderSchedule();
+  renderSettings();
+  renderEntries();
+}
+
+/* ============================================================================
+   AÇÕES DO USUÁRIO (adicionar registro, exportar, limpar)
+   ============================================================================ */
+
+// Ao enviar o formulário "Adicionar": valida se Data e Saída real foram
+// preenchidos e se já não existe um registro para aquela mesma data, depois
+// guarda o novo dia na lista "entries" e atualiza a tela.
+document.getElementById('addForm').addEventListener('submit', async (e)=>{
+  e.preventDefault();
+  const dateVal = document.getElementById('inpDate').value;
+  const exitVal = document.getElementById('inpExit').value;
+  const errEl = document.getElementById('errorMsg');
+  errEl.textContent = '';
+
+  if(!dateVal || !exitVal){
+    errEl.textContent = 'Preencha a data e a saída real.';
+    return;
+  }
+  if(entries.some(en=> en.date === dateVal)){
+    errEl.textContent = 'Já existe um registro para essa data. Remova-o antes de adicionar de novo.';
+    return;
+  }
+  entries.push({ id: Date.now().toString(), date: dateVal, exit: exitVal });
+  await saveEntries();
+  renderEntries();
+  document.getElementById('addForm').reset();
+});
+
+/* ============================================================================
+   EXPORTAÇÃO PARA EXCEL (.xlsx)
+   ============================================================================
+   Reproduz a mesma estrutura da planilha original, com duas abas:
+
+   - "Configuração": lista o horário (entrada/saída) de cada dia da semana.
+   - "Registro de Ponto": uma linha por dia, com fórmulas de Excel que
+     descobrem o dia da semana, buscam o horário previsto na aba
+     "Configuração" e calculam a hora extra — exatamente como na planilha
+     original. Por serem fórmulas de verdade (não valores fixos), o arquivo
+     continua funcionando se você editar ou adicionar linhas no Excel.
+   ============================================================================ */
+
+// Ordem dos dias (segunda a domingo) e o número que a função WEEKDAY() do
+// Excel usa para cada um — necessário para as fórmulas da aba "Registro de
+// Ponto" conseguirem localizar a linha certa na aba "Configuração".
+const WEEKDAY_ORDER = [1,2,3,4,5,6,0]; // segunda..domingo, mesma ordem da planilha original
+const WEEKDAY_NUM = {1:2, 2:3, 3:4, 4:5, 5:6, 6:7, 0:1}; // valor de WEEKDAY() do Excel
+
+// Converte "HH:MM" para o formato de horário interno do Excel (uma fração
+// do dia: 12:00 = 0,5). É assim que o Excel guarda horas por baixo dos panos.
+function timeToSerial(hhmm){
+  const [h,m] = hhmm.split(':').map(Number);
+  return (h*60+m)/1440;
+}
+
+// Monta o arquivo Excel inteiro (as duas abas, cabeçalhos, fórmulas e
+// formatação de número/hora) e dispara o download para o usuário.
+function buildWorkbook(){
+  const wb = XLSX.utils.book_new();
+
+  // ---------- Aba "Configuração" ----------
+  // Uma linha por dia da semana, com Entrada, Saída Prevista e o número
+  // usado pela fórmula WEEKDAY() do Excel para identificar o dia.
+  const cfgHeader = ["Dia da Semana","Entrada","Saída Prevista","Nº do dia (WEEKDAY)"];
+  const cfgAOA = [cfgHeader, ...WEEKDAY_ORDER.map(wd=>[DAY_NAMES[wd], "", "", WEEKDAY_NUM[wd]])];
+  const wsCfg = XLSX.utils.aoa_to_sheet(cfgAOA);
+
+  // Preenche as colunas de Entrada/Saída com o horário atual configurado
+  // na página, já no formato de horário do Excel (hh:mm).
+  WEEKDAY_ORDER.forEach((wd,i)=>{
+    const r = i+2; // linha 1 = cabeçalho
+    const s = schedule[wd];
+    wsCfg['B'+r] = s.in  ? { t:'n', v:timeToSerial(s.in),  z:'hh:mm' } : { t:'s', v:'' };
+    wsCfg['C'+r] = s.out ? { t:'n', v:timeToSerial(s.out), z:'hh:mm' } : { t:'s', v:'' };
+  });
+  wsCfg['!cols'] = [{wch:18},{wch:12},{wch:16},{wch:20}];
+  XLSX.utils.book_append_sheet(wb, wsCfg, 'Configuração');
+
+  // ---------- Aba "Registro de Ponto" ----------
+  // Uma linha por dia registrado na página, mais algumas linhas em branco
+  // no final para o usuário continuar preenchendo direto no Excel, se quiser.
+  const regHeader = ["Data","Dia da Semana","Entrada","Saída Prevista","Saída Real","Horas Extras (hh:mm)","Horas Extras (decimal)"];
+  const sortedEntries = [...entries].sort((a,b)=> a.date.localeCompare(b.date));
+  const totalDataRows = Math.max(sortedEntries.length + 15, 40); // linhas extras em branco para continuar preenchendo
+
+  const wsReg = XLSX.utils.aoa_to_sheet([regHeader]);
+  const startRow = 2;
+
+  for(let i=0;i<totalDataRows;i++){
+    const r = startRow + i;
+    const entry = sortedEntries[i];
+
+    // Coluna A (Data): valor fixo, só para os dias já registrados na página.
+    if(entry){
+      const [y,m,d] = entry.date.split('-').map(Number);
+      wsReg['A'+r] = { t:'d', v: new Date(Date.UTC(y, m-1, d)), z:'dd/mm/yyyy' };
+    }
+
+    // Coluna B (Dia da Semana): fórmula que lê a Data da coluna A e devolve
+    // o nome do dia por extenso, igual à planilha original.
+    wsReg['B'+r] = { t:'str', f:`IF(A${r}="","",CHOOSE(WEEKDAY(A${r}),"Domingo","Segunda-feira","Terça-feira","Quarta-feira","Quinta-feira","Sexta-feira","Sábado"))` };
+    // Coluna C (Entrada) e D (Saída Prevista): fórmulas que buscam, na aba
+    // "Configuração", o horário correspondente ao dia da semana da coluna B.
+    wsReg['C'+r] = { t:'n', z:'hh:mm', f:`IF(A${r}="","",IFERROR(INDEX(Configuração!$B$2:$B$8,MATCH($B${r},Configuração!$A$2:$A$8,0)),""))` };
+    wsReg['D'+r] = { t:'n', z:'hh:mm', f:`IF(A${r}="","",IFERROR(INDEX(Configuração!$C$2:$C$8,MATCH($B${r},Configuração!$A$2:$A$8,0)),""))` };
+
+    // Coluna E (Saída Real): valor fixo, só para os dias já registrados na página.
+    if(entry){
+      wsReg['E'+r] = { t:'n', v: timeToSerial(entry.exit), z:'hh:mm' };
+    }
+
+    // Coluna F (Horas Extras em hh:mm): Saída Real menos Saída Prevista,
+    // nunca menor que zero — a mesma regra usada na página.
+    wsReg['F'+r] = { t:'n', z:'[h]:mm', f:`IF(OR(A${r}="",E${r}="",D${r}=""),"",IF((E${r}-D${r})>0,E${r}-D${r},0))` };
+    // Coluna G (Horas Extras em decimal): a coluna F multiplicada por 24,
+    // convertendo de "fração do dia" para número de horas comum.
+    wsReg['G'+r] = { t:'n', z:'0.00', f:`IF(F${r}="","",F${r}*24)` };
+  }
+
+  // Linha de total: soma as colunas F e G de todas as linhas de dados.
+  const lastDataRow = startRow + totalDataRows - 1;
+  const totalRow = lastDataRow + 2;
+  wsReg['E'+totalRow] = { t:'s', v:'Total do período:' };
+  wsReg['F'+totalRow] = { t:'n', z:'[h]:mm', f:`SUM(F${startRow}:F${lastDataRow})` };
+  wsReg['G'+totalRow] = { t:'n', z:'0.00', f:`SUM(G${startRow}:G${lastDataRow})` };
+
+  wsReg['!ref'] = XLSX.utils.encode_range({ s:{r:0,c:0}, e:{r: totalRow-1, c:6} });
+  wsReg['!cols'] = [{wch:12},{wch:16},{wch:11},{wch:14},{wch:12},{wch:20},{wch:18}];
+  XLSX.utils.book_append_sheet(wb, wsReg, 'Registro de Ponto');
+
+  // Nome do arquivo baixado inclui a data de hoje, ex:
+  // planilha_horas_extras_2026-09-13.xlsx
+  const today = new Date().toISOString().slice(0,10);
+  XLSX.writeFile(wb, `planilha_horas_extras_${today}.xlsx`);
+}
+
+// Ao clicar em "Exportar para Excel": desabilita o botão por um instante,
+// gera o arquivo (função buildWorkbook) e trata qualquer erro na geração.
+document.getElementById('exportBtn').addEventListener('click', ()=>{
+  const btn = document.getElementById('exportBtn');
+  try{
+    btn.disabled = true;
+    btn.textContent = 'Gerando...';
+    buildWorkbook();
+  }catch(err){
+    console.error('Erro ao exportar:', err);
+    alert('Não foi possível gerar o arquivo Excel. Tente novamente.');
+  }finally{
+    btn.disabled = false;
+    btn.textContent = 'Exportar para Excel';
+  }
+});
+
+// Ao clicar em "Limpar todos os registros": pede confirmação e, se
+// confirmado, esvazia a lista de dias registrados.
+document.getElementById('clearBtn').addEventListener('click', async ()=>{
+  if(entries.length === 0) return;
+  if(confirm('Tem certeza que deseja apagar todos os registros?')){
+    entries = [];
+    await saveEntries();
+    renderEntries();
+  }
+});
+
+// Ponto de partida: carrega dados salvos (se houver) e desenha a página.
+loadData();
+</script>
+
+</body>
+</html>
